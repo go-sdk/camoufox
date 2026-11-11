@@ -1,0 +1,46 @@
+name: camoufox-sdk-test
+
+services:
+  camoufox:
+    image: starudream/camoufox:1.0.1
+    init: true
+    shm_size: 1gb
+    entrypoint:
+      - python
+      - -c
+      - |
+        import os, secrets
+        os.environ["KASMVNC_PASSWORD"] = secrets.token_urlsafe(24)
+        os.execvp("python", ["python", "/app/entrypoint.py"])
+    command: []
+    healthcheck:
+      test: >-
+        python -c 'import json;
+        from http.client import HTTPConnection;
+        connection = HTTPConnection("127.0.0.1", 3000, timeout=2);
+        connection.request("GET", "/json");
+        response = connection.getresponse();
+        assert response.status == 200;
+        assert json.loads(response.read())["wsEndpointPath"] == "/ws";
+        connection.close()'
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  tests:
+    build:
+      context: ..
+      dockerfile: tests/Dockerfile
+    init: true
+    environment:
+      CAMOUFOX_INTEGRATION_TESTS: "1"
+      CAMOUFOX_TEST_ENDPOINT: ws://camoufox:3000/ws
+      DEBUG: ""
+    depends_on:
+      camoufox:
+        condition: service_healthy
+
+networks:
+  default:
+    internal: true
