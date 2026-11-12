@@ -164,11 +164,15 @@ client := camoufox.New(camoufox.WithEndpoint(endpoint), camoufox.WithConnectTime
 
 ## 生命周期
 
-`Session.Close` 关闭自己的上下文和页面。`Client.Close` 清理所管理的会话、断开本客户端远程连接并停止本地驱动，浏览器服务由容器管理。清理客户端或失效连接时，若已有会话正在关闭，先等待该操作完成并合并错误；检测到本地驱动退出时停止等待。直接并发重复调用 `Client.Close` 或 `Session.Close` 不会等待首次调用，应以首次调用返回作为收尾完成依据。
+`Session.Close` 关闭自己的上下文和页面。`Client.Close` 清理所管理的会话、断开本客户端远程连接并停止本地驱动，浏览器服务由容器管理。未显式发起断连时，清理客户端或失效连接会先等待正在关闭的会话并合并错误；检测到本地驱动退出时停止等待。直接并发重复调用 `Client.Close` 或 `Session.Close` 不会等待首次调用，应以首次调用返回作为收尾完成依据。
 
 同一客户端并发 `Connect` 时，后来的调用返回 `ErrConnecting`。`Close` 会阻止正在创建的连接或会话向调用方发布，并等待并发 `Connect` 完成，合并其资源清理错误；普通连接失败本身不作为关闭错误。与 `NewSession` 并发时，仍需等待该调用返回，确认其失败清理已完成。原生 Page、Context 的并发和事件行为遵循上游接口，不应在事件回调中同步调用客户端生命周期方法，应投递到业务 goroutine 处理。
 
 断线或容器重启后，旧 Session、Context 和 Page 失效。未关闭的 Client 可以显式再次 `Connect()`，清理旧连接，再用 `NewSession` 恢复快照、重新创建页面并验证登录。已调用 `Client.Close()` 时需要重新 `New()`。SDK 不自动重连或重放页面操作，业务自行决定重试，避免重复提交。
+
+`Client.Disconnect(ctx)` 请求本地 Playwright 驱动断开远程连接，影响该连接上的所有会话。发出请求后不再接受新会话；并发调用共享正在执行的请求，失败后可重试。上下文只限制本次等待，不取消已发出的请求。只有确认远程连接断开才返回成功；若驱动先退出而无法确认断连，返回 `ErrDisconnect` 和 `ErrNotConnected`。断连成功也不代表远端已执行的操作被回滚。
+
+发起断连后，`Connect` 或 `Close` 会接管旧驱动的清理，无需等调用方再次执行 `Disconnect`。断连失败或等待断连结果超过 2 秒时，SDK 仅在 Linux 提供绑定进程身份的 pidfd 时强制终止旧驱动。无法安全终止时返回 `ErrDriverStop`，后台继续等待正常清理，不使用裸 PID 强杀。强制终止可以回收本地驱动，不能证明旧页面调用已经返回。
 
 本地驱动退出后，SDK 的 `IsConnected` 返回 false，`NewSession` 返回 `ErrNotConnected`，旧会话的 `SaveState` 返回 `ErrSessionClosed`；显式 `Connect` 会重新启动预装驱动。SDK 同步进程存活查询与独立查询句柄的释放，不另行等待或回收上游子进程。此检查与后续调用之间仍存在进程退出的时间窗口。
 
@@ -246,16 +250,18 @@ make test-compose
 
 首次运行需要联网拉取镜像、Go 模块、驱动和 Node.js。测试运行阶段使用 Compose 内部网络，不发布宿主机端口、不挂载已有登录快照。测试网页通过 Playwright 路由拦截提供，不访问真实网站；KasmVNC 密码在浏览器容器内随机生成，不写入配置或输出。镜像构建上下文仅包含 Go 源码、模块文件和测试 Dockerfile，不包含 `.git` 或 `.state/`。
 
-| 用例                                    | 验证内容                                                                             |
-|-----------------------------------------|--------------------------------------------------------------------------------------|
-| `TestIntegrationConnectionAndIsolation` | 连接、页面操作、同客户端会话隔离、多客户端隔离及重复关闭                             |
-| `TestIntegrationPageFileTransfer`       | 通过测试页面上传本地文件，并将远程浏览器下载保存到客户端                               |
-| `TestIntegrationStorageState`           | Cookie、Local Storage、IndexedDB 保存恢复，默认不保存 IndexedDB，文件及新建目录权限  |
-| `TestIntegrationStateFailures`          | 缺失、损坏及无效快照拒绝恢复，恢复失败清理上下文，保存失败清理临时文件并保留已有数据 |
-| `TestIntegrationReconnect`              | 主动断开远程连接后旧对象失效，显式重连并从快照重建会话                               |
-| `TestIntegrationDriverExit`             | Linux 下终止本次创建的本地驱动，检查 SDK 状态及显式重连后的快照恢复                  |
+| 用例                                               | 验证内容                                                                             |
+|--------------------------------------------------|--------------------------------------------------------------------------------------|
+| `TestIntegrationConnectionAndIsolation`          | 连接、页面操作、同客户端会话隔离、多客户端隔离及重复关闭                             |
+| `TestIntegrationPageFileTransfer`                | 通过测试页面上传本地文件，并将远程浏览器下载保存到客户端                             |
+| `TestIntegrationStorageState`                    | Cookie、Local Storage、IndexedDB 保存恢复，默认不保存 IndexedDB，文件及新建目录权限  |
+| `TestIntegrationStateFailures`                   | 缺失、损坏及无效快照拒绝恢复，恢复失败清理上下文，保存失败清理临时文件并保留已有数据 |
+| `TestIntegrationReconnect`                       | 主动断开远程连接后旧对象失效，显式重连并从快照重建会话                               |
+| `TestIntegrationDisconnectInterruptsPendingCall` | 本地驱动在线时主动断开，解除在途页面调用的等待并重连                                 |
+| `TestIntegrationDriverExit`                      | Linux 下终止本次创建的本地驱动，检查 SDK 状态及显式重连后的快照恢复                  |
+| `TestIntegrationRecoveryAfterDisconnectTimeout`  | 暂停本地驱动，验证断连超时后可关闭客户端或重连，旧驱动已退出                        |
 
-浏览器测试位于 `tests/`，导入 SDK 并使用公开 API 验证完整流程；重连用例通过原生 `Session.Context().Browser()` 断开当前连接，不访问 SDK 私有字段。Linux 驱动退出用例通过 `/proc` 元数据定位本次连接新建的子进程并终止，不读取进程命令行或环境变量，不验证旧原生调用能否解除等待。Compose 与 Dockerfile 放在同一目录，构建上下文仍为模块根目录。
+浏览器测试位于 `tests/`，导入 SDK 并使用公开 API 验证完整流程；重连用例通过原生 `Session.Context().Browser()` 断开当前连接，不访问 SDK 私有字段。Linux 驱动退出用例通过 `/proc` 元数据定位本次连接新建的子进程并终止，不读取进程命令行或环境变量，不验证旧原生调用能否解除等待。断连超时恢复用例只暂停同样方式定位的本地驱动，在支持 pidfd 的 Linux 上验证强制回收。Compose 与 Dockerfile 放在同一目录，构建上下文仍为模块根目录。
 
 以上用例测试受控页面上的存储行为，不证明真实网站登录、代理出口、KasmVNC 人工交互或容器崩溃恢复。浏览器测试源文件使用 `integration` 构建标签，并要求 `CAMOUFOX_INTEGRATION_TESTS=1`；普通 `make test` 不编译或运行浏览器用例。
 

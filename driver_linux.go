@@ -3,6 +3,7 @@
 package camoufox
 
 import (
+	"os"
 	"syscall"
 
 	"github.com/go-sdk/core/errx"
@@ -27,6 +28,24 @@ func (d *clientDriver) release() error {
 		return nil
 	}
 	err := d.process.Release()
+	d.process = nil
+	return err
+}
+
+// terminate 仅通过绑定进程身份的 pidfd 终止驱动，避免向复用的 PID 发信号。
+func (d *clientDriver) terminate() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	process := d.process
+	if process == nil {
+		return nil
+	}
+	var signalErr error
+	handleErr := process.WithHandle(func(uintptr) { signalErr = process.Kill() })
+	if err := errx.Join(handleErr, signalErr); err != nil && !errx.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	err := process.Release()
 	d.process = nil
 	return err
 }

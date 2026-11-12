@@ -15,7 +15,7 @@ camoufox/
 ├── .gitignore                      本地登录快照目录忽略规则
 ├── AGENTS.md                       仓库协作规范
 ├── client.go                       Client、默认值、Options 和连接生命周期
-├── driver_linux.go                 Linux 驱动进程查询及查询句柄释放的同步
+├── driver_linux.go                 Linux 驱动进程查询、终止及查询句柄释放
 ├── session.go                      独立上下文创建、注册、恢复和关闭
 ├── state.go                        原始快照校验、受限临时文件及保存替换
 ├── client_test.go                  无浏览器的客户端配置、校验和错误分类测试
@@ -23,7 +23,7 @@ camoufox/
 ├── state_test.go                   无浏览器的快照校验、权限及保存替换测试
 ├── tests/                          仅使用公开 API 的浏览器集成测试
 │   ├── integration_test.go         连接、隔离、快照和显式重连测试
-│   ├── driver_linux_test.go        本地驱动退出后的 SDK 状态及显式重连测试
+│   ├── driver_linux_test.go        本地驱动退出、暂停及断连超时恢复测试
 │   ├── compose.yaml                浏览器和测试容器的独立编排
 │   └── Dockerfile                  预装驱动并编译带竞态检测的测试执行器
 ├── error.go                        哨兵错误及安全的上游错误分类
@@ -65,13 +65,14 @@ Session.Close
     -> Context.Close -> 解除注册
 
 Client.Close
-    -> 清理会话或等待进行中的会话关闭 -> Browser.Close -> Playwright.Stop
+    -> 未发起断连：清理会话 -> Browser.Close -> Playwright.Stop
+    -> 已发起断连：接管旧驱动清理，超时则尝试通过 pidfd 终止
     -> 释放进程查询句柄，等待并发 Connect 并合并其清理错误
 ```
 
-客户端和会话的状态由互斥锁保护，远程调用和等待在状态锁外执行；`saveMu` 串行化同一会话的快照保存。创建的上下文在返回前检查所属连接，无法发布时清理；原生关闭事件更新会话状态，若 SDK 已开始关闭则由该调用解除注册。并发关闭及断线后的处理方式见 [README](README.md#生命周期)。
+`Client.Disconnect(ctx)` 可在本地驱动仍能处理请求时先断开远程连接，并发请求共享一次断连，失败可重试；关闭或重连会接管已发起的断连。客户端和会话的状态由互斥锁保护，远程调用和等待在状态锁外执行；`saveMu` 串行化同一会话的快照保存。创建的上下文在返回前检查所属连接，无法发布时清理；原生关闭事件更新会话状态，若 SDK 已开始关闭则由该调用解除注册。并发关闭及断线后的处理方式见 [README](README.md#生命周期)。
 
-`clientDriver` 的进程锁串行化本地存活查询与查询句柄释放，兼容 Linux 未提供 pidfd 时的 PID 查询；停止驱动和远程关闭在该锁外执行，子进程由上游回收。
+`clientDriver` 的进程锁串行化本地存活查询与查询句柄释放，兼容 Linux 未提供 pidfd 时的 PID 查询；强制终止要求 pidfd；协议关闭和等待子进程退出在进程锁外执行，子进程由上游回收。
 
 SDK 检测到本地驱动退出后拒绝新会话及旧快照保存，跳过失效驱动上的远程关闭请求，允许显式重连。当前上游无法通过公开 API 解除驱动退出前已经挂起的原生调用；SDK 状态检查与新连接恢复不代表该上游问题已解决，详见 README 的生命周期限制。
 

@@ -3,6 +3,7 @@
 package tests
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -305,4 +306,44 @@ func TestIntegrationReconnect(t *testing.T) {
 	value, err := restoredPage.Evaluate(`() => localStorage.getItem("fixture")`)
 	testx.NoError(t, err)
 	testx.Equal(t, "reconnected", value)
+}
+
+func TestIntegrationDisconnectInterruptsPendingCall(t *testing.T) {
+	client := newIntegrationClient(t)
+	session, err := client.NewSession()
+	testx.NoError(t, err)
+	page := newIntegrationPage(t, session)
+	started := make(chan struct{}, 1)
+	page.OnConsole(func(message playwright.ConsoleMessage) {
+		if message.Text() == "pending fixture" {
+			started <- struct{}{}
+		}
+	})
+	result := make(chan error, 1)
+	go func() {
+		_, err := page.Evaluate(`() => {
+			console.log("pending fixture");
+			return new Promise(() => {});
+		}`)
+		result <- err
+	}()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("test call did not reach the browser")
+	}
+	testx.NoError(t, client.Disconnect(ctx))
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("interrupted call returned success")
+		}
+	case <-ctx.Done():
+		t.Fatal("pending call did not stop after disconnect")
+	}
+	testx.NoError(t, client.Connect())
+	testx.True(t, client.IsConnected())
 }

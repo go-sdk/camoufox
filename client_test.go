@@ -1,9 +1,11 @@
 package camoufox
 
 import (
+	"context"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -192,15 +194,91 @@ func (*connectedBrowser) IsConnected() bool { return true }
 
 type cleanupBrowser struct {
 	playwright.Browser
-	started chan struct{}
-	proceed chan struct{}
-	err     error
+	started   chan struct{}
+	proceed   chan struct{}
+	err       error
+	connected atomic.Bool
 }
 
-func (*cleanupBrowser) IsConnected() bool { return false }
+func (b *cleanupBrowser) IsConnected() bool { return b.connected.Load() }
 
 func (b *cleanupBrowser) Close(...playwright.BrowserCloseOptions) error {
 	close(b.started)
 	<-b.proceed
+	if b.err == nil {
+		b.connected.Store(false)
+	}
 	return b.err
+}
+
+func TestDisconnectWaitCanBeCanceled(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		browser := &cleanupBrowser{started: make(chan struct{}), proceed: make(chan struct{})}
+		browser.connected.Store(true)
+		resume := sync.OnceFunc(func() { close(browser.proceed) })
+		defer resume()
+		client := newSessionTestClient(t, browser)
+		testx.True(t, client.IsConnected())
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		result := make(chan error, 1)
+		go func() { result <- client.Disconnect(ctx) }()
+		<-browser.started
+		testx.False(t, client.IsConnected())
+		_, err := client.NewSession()
+		testx.ErrorIs(t, err, ErrNotConnected)
+		cancel()
+		testx.ErrorIs(t, <-result, context.Canceled)
+
+		joined := make(chan error, 1)
+		go func() { joined <- client.Disconnect(t.Context()) }()
+		synctest.Wait()
+		resume()
+		testx.NoError(t, <-joined)
+		testx.NoError(t, client.Disconnect(t.Context()))
+	})
+}
+
+func TestDisconnectCanRetryAfterFailure(t *testing.T) {
+	browser := &retryDisconnectBrowser{}
+	client := newSessionTestClient(t, browser)
+	err := client.Disconnect(t.Context())
+	testx.ErrorIs(t, err, ErrDisconnect)
+	testx.NotContains(t, err.Error(), "upstream fixture")
+	testx.False(t, client.IsConnected())
+	testx.NoError(t, client.Disconnect(t.Context()))
+	testx.NoError(t, client.Disconnect(t.Context()))
+	testx.Equal(t, int32(2), browser.calls.Load())
+}
+
+type retryDisconnectBrowser struct {
+	playwright.Browser
+	calls atomic.Int32
+}
+
+func (b *retryDisconnectBrowser) IsConnected() bool { return b.calls.Load() < 2 }
+
+func (b *retryDisconnectBrowser) Close(...playwright.BrowserCloseOptions) error {
+	if b.calls.Add(1) == 1 {
+		return errx.New("upstream fixture")
+	}
+	return nil
+}
+
+func TestDisconnectRejectsSuccessAfterDriverExit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		browser := &cleanupBrowser{started: make(chan struct{}), proceed: make(chan struct{})}
+		resume := sync.OnceFunc(func() { close(browser.proceed) })
+		defer resume()
+		browser.connected.Store(true)
+		client := newSessionTestClient(t, browser)
+		result := make(chan error, 1)
+		go func() { result <- client.Disconnect(t.Context()) }()
+		<-browser.started
+		testx.NoError(t, client.driver.release())
+		resume()
+		err := <-result
+		testx.ErrorIs(t, err, ErrDisconnect)
+		testx.ErrorIs(t, err, ErrNotConnected)
+	})
 }

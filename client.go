@@ -1,6 +1,7 @@
 package camoufox
 
 import (
+	"context"
 	"maps"
 	"net/url"
 	"os"
@@ -12,8 +13,9 @@ import (
 )
 
 const (
-	defaultEndpoint       = "ws://127.0.0.1:3000/ws"
-	defaultConnectTimeout = 30 * time.Second
+	defaultEndpoint          = "ws://127.0.0.1:3000/ws"
+	defaultConnectTimeout    = 30 * time.Second
+	disconnectCleanupTimeout = 2 * time.Second
 )
 
 type Option func(*Client)
@@ -25,13 +27,14 @@ type Client struct {
 	headers         map[string]string
 	driverDirectory string
 
-	mu         sync.Mutex
-	driver     *clientDriver
-	browser    playwright.Browser
-	sessions   map[*Session]struct{}
-	connecting *connectAttempt
-	closed     bool
-	closeErr   error
+	mu            sync.Mutex
+	driver        *clientDriver
+	browser       playwright.Browser
+	sessions      map[*Session]struct{}
+	connecting    *connectAttempt
+	disconnecting *disconnectAttempt
+	closed        bool
+	closeErr      error
 }
 
 type clientDriver struct {
@@ -44,6 +47,11 @@ type clientDriver struct {
 type connectAttempt struct {
 	done       chan struct{}
 	cleanupErr error
+}
+
+type disconnectAttempt struct {
+	done chan struct{}
+	err  error
 }
 
 // New 仅保存配置，不启动驱动、安装依赖或建立连接。
@@ -101,7 +109,7 @@ func (c *Client) Connect() error {
 		c.mu.Unlock()
 		return ErrConnecting
 	}
-	if c.driver != nil && c.driver.isRunning() && c.browser != nil && c.browser.IsConnected() {
+	if c.disconnecting == nil && c.driver != nil && c.driver.isRunning() && c.browser != nil && c.browser.IsConnected() {
 		c.mu.Unlock()
 		return nil
 	}
@@ -116,7 +124,7 @@ func (c *Client) Connect() error {
 	}
 	attempt := &connectAttempt{done: make(chan struct{})}
 	c.connecting = attempt
-	sessions, browser, driver := c.detach()
+	sessions, browser, driver, disconnecting := c.detach()
 	c.mu.Unlock()
 	defer func() {
 		c.mu.Lock()
@@ -124,7 +132,7 @@ func (c *Client) Connect() error {
 		c.connecting = nil
 		c.mu.Unlock()
 	}()
-	attempt.cleanupErr = closeResources(sessions, browser, driver)
+	attempt.cleanupErr = closeResources(sessions, browser, driver, disconnecting)
 	if attempt.cleanupErr != nil {
 		return attempt.cleanupErr
 	}
@@ -152,7 +160,7 @@ func (c *Client) Connect() error {
 		Timeout: playwright.Float(float64(c.connectTimeout) / float64(time.Millisecond)),
 	})
 	if err != nil {
-		attempt.cleanupErr = closeResources(nil, nil, driver)
+		attempt.cleanupErr = closeResources(nil, nil, driver, nil)
 		return errx.Join(operationError(ErrConnect, err), attempt.cleanupErr)
 	}
 	c.mu.Lock()
@@ -162,7 +170,7 @@ func (c *Client) Connect() error {
 			publishErr = ErrClientClosed
 		}
 		c.mu.Unlock()
-		attempt.cleanupErr = closeResources(nil, browser, driver)
+		attempt.cleanupErr = closeResources(nil, browser, driver, nil)
 		return errx.Join(publishErr, attempt.cleanupErr)
 	}
 	c.driver, c.browser = driver, browser
@@ -174,7 +182,58 @@ func (c *Client) Connect() error {
 func (c *Client) IsConnected() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return !c.closed && c.driver != nil && c.driver.isRunning() && c.browser != nil && c.browser.IsConnected()
+	return !c.closed && c.disconnecting == nil && c.driver != nil && c.driver.isRunning() && c.browser != nil && c.browser.IsConnected()
+}
+
+// Disconnect 断开当前远程连接。成功表示已确认断连，不代表远端操作已回滚。
+// 上下文只限制本次等待；失败后可重试，Connect 或 Close 可接管旧驱动的清理。
+func (c *Client) Disconnect(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return ErrClientClosed
+	}
+	driver, browser := c.driver, c.browser
+	if driver == nil || browser == nil || !driver.isRunning() {
+		c.mu.Unlock()
+		return ErrNotConnected
+	}
+	attempt := c.disconnecting
+	if attempt != nil {
+		select {
+		case <-attempt.done:
+			if attempt.err != nil {
+				attempt = nil
+			}
+		default:
+		}
+	}
+	if attempt == nil {
+		attempt = &disconnectAttempt{done: make(chan struct{})}
+		c.disconnecting = attempt
+		go func(attempt *disconnectAttempt) {
+			defer close(attempt.done)
+			err := browser.Close()
+			switch {
+			case !driver.isRunning():
+				attempt.err = errx.Join(ErrDisconnect, ErrNotConnected)
+			case err != nil:
+				attempt.err = operationError(ErrDisconnect, err)
+			case browser.IsConnected():
+				attempt.err = ErrDisconnect
+			}
+		}(attempt)
+	}
+	c.mu.Unlock()
+	select {
+	case <-attempt.done:
+		return attempt.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Close 关闭本客户端会话、断开连接并停止驱动，不保存快照。
@@ -187,10 +246,10 @@ func (c *Client) Close() error {
 		return err
 	}
 	c.closed = true
-	sessions, browser, driver := c.detach()
+	sessions, browser, driver, disconnecting := c.detach()
 	connecting := c.connecting
 	c.mu.Unlock()
-	err := closeResources(sessions, browser, driver)
+	err := closeResources(sessions, browser, driver, disconnecting)
 	if connecting != nil {
 		<-connecting.done
 		err = errx.Join(err, connecting.cleanupErr)
@@ -202,18 +261,44 @@ func (c *Client) Close() error {
 }
 
 // detach 只在持有 mu 时转移资源，远程清理在锁外执行。
-func (c *Client) detach() ([]*Session, playwright.Browser, *clientDriver) {
+func (c *Client) detach() ([]*Session, playwright.Browser, *clientDriver, *disconnectAttempt) {
 	sessions := make([]*Session, 0, len(c.sessions))
 	for session := range c.sessions {
 		sessions = append(sessions, session)
 	}
-	browser, driver := c.browser, c.driver
+	browser, driver, disconnecting := c.browser, c.driver, c.disconnecting
 	c.sessions = make(map[*Session]struct{})
-	c.browser, c.driver = nil, nil
-	return sessions, browser, driver
+	c.browser, c.driver, c.disconnecting = nil, nil, nil
+	return sessions, browser, driver, disconnecting
 }
 
-func closeResources(sessions []*Session, browser playwright.Browser, driver *clientDriver) error {
+func closeResources(sessions []*Session, browser playwright.Browser, driver *clientDriver, disconnecting *disconnectAttempt) error {
+	if disconnecting != nil {
+		// 断连已接管所有会话，不再向同一连接发起逐个关闭的请求。
+		select {
+		case <-disconnecting.done:
+			if !driver.isRunning() {
+				return operationError(ErrDriverStop, driver.release())
+			}
+			if disconnecting.err == nil {
+				return driver.stop()
+			}
+		case <-time.After(disconnectCleanupTimeout):
+		}
+		// 正常停止和强制终止走不同路径，避免同时关闭同一个上游管道。
+		if err := driver.terminate(); err != nil {
+			go func() {
+				<-disconnecting.done
+				if driver.isRunning() {
+					_ = driver.stop()
+				} else {
+					_ = driver.release()
+				}
+			}()
+			return operationError(ErrDriverStop, err)
+		}
+		return nil
+	}
 	var result error
 	for _, session := range sessions {
 		result = errx.Join(result, session.close(true))
@@ -223,8 +308,12 @@ func closeResources(sessions []*Session, browser playwright.Browser, driver *cli
 		result = errx.Join(result, operationError(ErrDisconnect, browser.Close()))
 	}
 	if driver != nil {
-		result = errx.Join(result, operationError(ErrDriverStop, driver.Stop()))
-		result = errx.Join(result, operationError(ErrDriverStop, driver.release()))
+		result = errx.Join(result, driver.stop())
 	}
 	return result
+}
+
+func (d *clientDriver) stop() error {
+	err := operationError(ErrDriverStop, d.Stop())
+	return errx.Join(err, operationError(ErrDriverStop, d.release()))
 }

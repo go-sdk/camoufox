@@ -43,7 +43,7 @@ func (c *Client) NewSession(options ...playwright.BrowserNewContextOptions) (*Se
 	}
 	browser := c.browser
 	driver := c.driver
-	if driver == nil || !driver.isRunning() || browser == nil || !browser.IsConnected() {
+	if c.disconnecting != nil || driver == nil || !driver.isRunning() || browser == nil || !browser.IsConnected() {
 		c.mu.Unlock()
 		return nil, ErrNotConnected
 	}
@@ -85,7 +85,7 @@ func (c *Client) NewSession(options ...playwright.BrowserNewContextOptions) (*Se
 	var publishErr error
 	if c.closed {
 		publishErr = ErrClientClosed
-	} else if c.browser != browser || !driver.isRunning() || !browser.IsConnected() {
+	} else if c.disconnecting != nil || c.browser != browser || !driver.isRunning() || !browser.IsConnected() {
 		publishErr = ErrNotConnected
 	} else if ctx.IsClosed() {
 		publishErr = ErrSessionClosed
