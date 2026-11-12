@@ -2,7 +2,7 @@
 
 `github.com/go-sdk/camoufox` 提供 Camoufox 远程 Firefox 连接、独立会话及登录快照管理。页面操作直接使用原生 Playwright API。
 
-`New` 仅保存配置，`Connect` 启动预先安装的本地驱动并建立远程连接。SDK 的职责和业务侧约束见[支持边界](#支持边界)。
+`New` 仅保存配置，`Connect` 启动预先安装的本地驱动并建立远程连接。SDK 的职责和业务侧约束见 [支持边界](#支持边界)，仓库结构见 [项目地图](PROJECT_MAP.md)。
 
 ## 环境要求与安装
 
@@ -10,17 +10,17 @@
 go get github.com/go-sdk/camoufox
 ```
 
-| 组件             | 版本或要求                                               |
-|------------------|----------------------------------------------------------|
-| 运行平台         | 仅支持 `linux/amd64`、`linux/arm64`                       |
-| Go               | 1.27.0 或更新版本                                        |
-| 基础库           | `github.com/go-sdk/core v1.6.8`，使用 errx 和 codec/json |
-| Go Playwright 包 | `github.com/mxschmitt/playwright-go v0.6201.1`           |
-| 客户端驱动       | Playwright `1.62.1`                                      |
-| 远程协议         | Playwright `1.62.x`，主、次版本必须一致                  |
-| 参考镜像         | `starudream/camoufox:1.0.1`，服务端 Playwright `1.62.0`  |
+| 组件             | 版本或要求                                                   |
+|------------------|--------------------------------------------------------------|
+| 运行平台         | 仅支持 `linux/amd64`、`linux/arm64`                          |
+| Go               | `1.27.0` 或更新版本                                          |
+| 基础库           | `github.com/go-sdk/core v1.6.8`，使用 `errx` 和 `codec/json` |
+| Go Playwright 包 | `github.com/mxschmitt/playwright-go v0.6201.1`               |
+| 客户端驱动       | Playwright `1.62.1`                                          |
+| 远程协议         | Playwright `1.62.x`，主、次版本必须一致                      |
+| 参考镜像         | `starudream/camoufox:1.0.1`，服务端 Playwright `1.62.0`      |
 
-参考镜像的配置见[镜像说明](https://github.com/starudream/docker-image/tree/master/camoufox)。上表是源码中的版本契约，连接及浏览器行为需在部署环境验证。
+参考镜像的配置见 [镜像说明](https://github.com/starudream/docker-image/tree/master/camoufox)。上表是源码中的版本契约，连接及浏览器行为需在部署环境验证。
 
 本仓库在 `go.mod` 中通过 `replace` 固定 Playwright Go 的实际源码版本，使 `go get -u -v all` 可以更新其他依赖而不改变驱动协议。该规则仅在本仓库作为主模块时生效。下游应用由自己的模块依赖图选定 Playwright Go 版本；若需要固定到表中的版本，应在自己的主模块中添加相同的 `replace`，并使用配套驱动。
 
@@ -147,7 +147,7 @@ err := session.SaveState(".state/login.json", playwright.BrowserContextStorageSt
 - 已有目录权限由调用方管理。不同 Session 或进程写同一路径时，调用方应串行协调；SDK 仅串行化同一 Session 的保存。
 - 不在关闭、进程退出或断线时隐式保存，业务负责保存时机和过期判断。
 
-快照包含登录凭证，应放在受控持久化目录；本仓库忽略 `.state/`。原生选项 `Credentials` 还可包含虚拟 WebAuthn 凭证，调用方应按凭证文件管理。StorageState 的范围见[支持边界](#支持边界)。
+快照包含登录凭证，应放在受控持久化目录；本仓库忽略 `.state/`。原生选项 `Credentials` 还可包含虚拟 WebAuthn 凭证，调用方应按凭证文件管理。StorageState 的范围见 [支持边界](#支持边界)。
 
 ## Client 配置
 
@@ -198,7 +198,7 @@ SDK 使用 `core/errx` 创建、合并和判断错误，也兼容标准库 `erro
 - 仅支持远程 Firefox Playwright 连接，页面操作直接使用原生 Context、Page 和选项类型。
 - SDK 管理客户端连接、独立会话和登录快照；容器负责浏览器进程、指纹、KasmVNC 和 Playwright 服务。
 - 不启动本地浏览器，不自动下载安装依赖，不管理容器或网站业务流程。
-- StorageState 不包含 Session Storage、完整用户目录、扩展、页面或完整浏览器配置，网站是否能恢复登录需要实际验证。
+- `StorageState` 不包含 Session Storage、完整用户目录、扩展、页面或完整浏览器配置，网站是否能恢复登录需要实际验证。
 - 业务负责登录成功判断、快照保存时机和过期判断、代理出口一致性及重试策略。
 
 ## 开发
@@ -212,9 +212,11 @@ make build
 git diff --check
 ```
 
-`make lint` 先整理模块依赖，再检查包括 integration 标签在内的源码；`make build` 仅编译生产包。以上命令不执行测试、不启动驱动、不连接浏览器。空仓库尚未提交时，可设置 `GOFLAGS=-buildvcs=false` 执行静态检查与编译。
+`make lint` 先整理模块依赖，再检查包括 `integration` 标签在内的源码；`make build` 仅编译生产包。以上命令不执行测试、不启动驱动、不连接浏览器。空仓库尚未提交时，可设置 `GOFLAGS=-buildvcs=false` 执行静态检查与编译。
 
 ## 测试流程
+
+[GitHub Actions](.github/workflows/golang.yml) 在推送到 `master` 或推送 `v*` 标签时运行，检查模块文件和源码，并通过 `make test` 执行普通单元测试。标签的检查和测试通过后，工作流创建 GitHub Release 并预热 Go 模块代理。双架构的浏览器集成测试按下文单独运行。
 
 ### 普通单元测试
 
@@ -250,7 +252,7 @@ make test-compose
 
 首次运行需要联网拉取镜像、Go 模块、驱动和 Node.js。测试运行阶段使用 Compose 内部网络，不发布宿主机端口、不挂载已有登录快照。测试网页通过 Playwright 路由拦截提供，不访问真实网站；KasmVNC 密码在浏览器容器内随机生成，不写入配置或输出。镜像构建上下文仅包含 Go 源码、模块文件和测试 Dockerfile，不包含 `.git` 或 `.state/`。
 
-| 用例                                               | 验证内容                                                                             |
+| 用例                                             | 验证内容                                                                             |
 |--------------------------------------------------|--------------------------------------------------------------------------------------|
 | `TestIntegrationConnectionAndIsolation`          | 连接、页面操作、同客户端会话隔离、多客户端隔离及重复关闭                             |
 | `TestIntegrationPageFileTransfer`                | 通过测试页面上传本地文件，并将远程浏览器下载保存到客户端                             |
@@ -259,7 +261,7 @@ make test-compose
 | `TestIntegrationReconnect`                       | 主动断开远程连接后旧对象失效，显式重连并从快照重建会话                               |
 | `TestIntegrationDisconnectInterruptsPendingCall` | 本地驱动在线时主动断开，解除在途页面调用的等待并重连                                 |
 | `TestIntegrationDriverExit`                      | Linux 下终止本次创建的本地驱动，检查 SDK 状态及显式重连后的快照恢复                  |
-| `TestIntegrationRecoveryAfterDisconnectTimeout`  | 暂停本地驱动，验证断连超时后可关闭客户端或重连，旧驱动已退出                        |
+| `TestIntegrationRecoveryAfterDisconnectTimeout`  | 暂停本地驱动，验证断连超时后可关闭客户端或重连，旧驱动已退出                         |
 
 浏览器测试位于 `tests/`，导入 SDK 并使用公开 API 验证完整流程；重连用例通过原生 `Session.Context().Browser()` 断开当前连接，不访问 SDK 私有字段。Linux 驱动退出用例通过 `/proc` 元数据定位本次连接新建的子进程并终止，不读取进程命令行或环境变量，不验证旧原生调用能否解除等待。断连超时恢复用例只暂停同样方式定位的本地驱动，在支持 pidfd 的 Linux 上验证强制回收。Compose 与 Dockerfile 放在同一目录，构建上下文仍为模块根目录。
 

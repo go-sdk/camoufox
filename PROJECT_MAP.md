@@ -10,6 +10,7 @@
 
 ```text
 camoufox/
+├── .github/workflows/golang.yml    Go 检查、单元测试和标签发布
 ├── .editorconfig                   编辑器格式规范
 ├── .dockerignore                   测试镜像构建上下文白名单
 ├── .gitignore                      本地登录快照目录忽略规则
@@ -87,5 +88,7 @@ SDK 检测到本地驱动退出后拒绝新会话及旧快照保存，跳过失�
 `make fmt` 格式化代码，`make lint` 整理依赖并检查包括 integration 标签在内的源码，`make build` 仅编译生产包。普通单元测试使用 `core/testx`，不启动驱动或浏览器。浏览器测试由 `integration` 构建标签和环境变量共同启用，流程见 [README](README.md#测试流程)。
 
 `tests/compose.yaml` 编排 Camoufox 与测试执行器，后者等待浏览器健康检查成功，再依次运行根包单元测试和独立集成测试包。测试镜像使用模块锁定的 Playwright CLI 准备驱动及 Node.js，显式将 Node 权限设为 `0755`，供运行用户 `1000:1000` 执行；构建期间仅编译两份带竞态检测的测试执行器，不执行用例。运行阶段使用内部网络和路由拦截页面，不依赖外站、宿主机端口或已有快照。
+
+[GitHub Actions](.github/workflows/golang.yml) 复用 Go SDK 通用工作流，执行检查、普通单元测试和标签发布。触发条件见 [README](README.md#测试流程)。
 
 未经明确授权不运行测试、示例、驱动、浏览器或外部接口；静态检查、Compose 配置解析和编译不能证明容器或浏览器运行成功。
