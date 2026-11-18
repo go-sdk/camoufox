@@ -3,12 +3,12 @@ module github.com/go-sdk/camoufox
 go 1.27.0
 
 require (
-	github.com/go-sdk/core v1.6.8
+	github.com/go-sdk/core v1.6.9
 	github.com/mxschmitt/playwright-go v0.6201.1
 )
 
 require (
-	github.com/brianvoe/gofakeit/v7 v7.18.2 // indirect
+	github.com/brianvoe/gofakeit/v7 v7.18.9 // indirect
 	github.com/deckarep/golang-set/v2 v2.8.0 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/kr/pretty v0.3.1 // indirect

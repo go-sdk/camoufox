@@ -1,12 +1,12 @@
-github.com/brianvoe/gofakeit/v7 v7.18.2 h1:e5aYhIDQT8z6p/sB5cHVoTiswhb3RImxk01BOdrAL0A=
-github.com/brianvoe/gofakeit/v7 v7.18.2/go.mod h1:QXuPeBw164PJCzCUZVmgpgHJ3Llj49jSLVkKPMtxtxA=
+github.com/brianvoe/gofakeit/v7 v7.18.9 h1:/lPiVCSm8aTEWN7W5koD5lPWOVL7C2i2nPVo0qWlkJ0=
+github.com/brianvoe/gofakeit/v7 v7.18.9/go.mod h1:QXuPeBw164PJCzCUZVmgpgHJ3Llj49jSLVkKPMtxtxA=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/deckarep/golang-set/v2 v2.8.0 h1:swm0rlPCmdWn9mESxKOjWk8hXSqoxOp+ZlfuyaAdFlQ=
 github.com/deckarep/golang-set/v2 v2.8.0/go.mod h1:VAky9rY/yGXJOLEDv3OMci+7wtDpOF4IN+y82NBOac4=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
-github.com/go-sdk/core v1.6.8 h1:joNiZ3uIBBg0LIALW8hJcefxHyhlDYkayjvzHvQdDq8=
-github.com/go-sdk/core v1.6.8/go.mod h1:kN6jiZ+5hMEpX5A8MOfUEr5tdRSqI9NQ2SP5yhZyBuE=
+github.com/go-sdk/core v1.6.9 h1:e3mv6JBd6PyV/33308ph+ab4Ywx2XNOyyhkOq7rU5RU=
+github.com/go-sdk/core v1.6.9/go.mod h1:pt06Uxku/0B2eZ1qA05S/HLCt//O58ng//fhA65CdPE=
 github.com/go-stack/stack v1.8.1 h1:ntEHSVwIt7PNXNpgPmVfMrNhLtgjlmnZha2kOpuRiDw=
 github.com/go-stack/stack v1.8.1/go.mod h1:dcoOX6HbPZSZptuspn9bctJ+N/CnF5gGygcUP3XYfe4=
 github.com/google/go-cmp v0.5.9 h1:O2Tfq5qg4qc4AmwVlvv0oLiVAGB7enBSJ2x2DqQFi38=
